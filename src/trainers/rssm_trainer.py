@@ -17,7 +17,7 @@ from trainers.metrics import MetricsHelper
 class RSSMTrainer(object):
     def __init__(self, root_conf, from_scratch=True):
         super().__init__()
-
+        print("Constructor of the Trainer")
         self.conf = root_conf.trainer_config
         self.device = self.conf.train_device
         self.batch_size = self.conf.batch_size
@@ -77,6 +77,7 @@ class RSSMTrainer(object):
 
     def build_dataloaders(self, dataset_config):
         print("Building dataset..")
+        
         dataset = D4RLDataset(dataset_config)
         train_dataset, val_dataset = self.val_train_split(dataset)
 
@@ -95,15 +96,17 @@ class RSSMTrainer(object):
             for batch in self.dataloaders["train"]:
                 obs = {k: v.to(self.device) for k, v in batch.items()}
                 self.optimizer.zero_grad()
-
+                
+                # Taking training step with the model
                 with autocast(enabled=True):
                     batch_metrics, decoded_img, out_states, samples = self.model.training_step(
                         obs, in_states)
                 in_states = out_states
 
-                # put before param updates
+                # Logging stats, saving checkpoints
                 self.log_stats(batch_metrics, samples, decoded_img)
 
+                # Backpropagation here
                 self.scaler.scale(batch_metrics["loss"]).backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 200)
                 self.scaler.step(self.optimizer)
@@ -114,6 +117,8 @@ class RSSMTrainer(object):
         batch_size = self.conf.validation.batch_size
         running_metrics = {
             metric_name: 0 for metric_name in self.metrics_helper.batch_metrics}
+
+        # Effectively inferencing all of the validation set
         with torch.no_grad():
             in_states = self.model.init_state(batch_size)
             for batch in self.dataloaders["val"]:
@@ -138,6 +143,7 @@ class RSSMTrainer(object):
     def log_stats(self, batch_metrics, samples, decoded_img):
         steps = self.metrics_helper.step_dict["train"]
 
+        # Do validation, predict the image
         if steps % (len(self.dataloaders["train"])) == 0:
             self.validate() if self.do_val else None
             pred_img = self.model.pred_img(*samples)

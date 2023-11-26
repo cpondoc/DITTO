@@ -1,27 +1,35 @@
 dreamer:
-  env: "breakout"
+  env: "nocturne"
 
 data:
   data_keys: ["action", "obs", "reset"]
   load_device: "cpu"
   train_device: "cuda:0"
-  breakout:
+  nocturne:
     use_sb3: True
-    dataset_names: ["breakout-expert-v2"] # old param for d4rl data, deprecated
-    dataset_path: "/home/cdpg/chris/DITTO/data/breakout_episodes" # path to episode data (npz format)
+    dataset_path: "/home/cdpg/chris/DITTO/data/episodes" # path to episode data (npz format)
     episode_limit: 125 # max num episodes to read in
     world_models:
       use_cached_features: False # loads cached latent features if they exist, otherwise infers from world model
       sb3:
-        checkpoint_path: "/home/cdpg/chris/DITTO/data/models/breakout/sb3/" # saves trained policies here, and reads World Model
+        checkpoint_path: "/home/cdpg/chris/DITTO/data/models/nocturne/sb3/" # saves trained policies here, and reads World Model
         wm_fname: "sb3-model-1000000_steps.pth"
-        cached_features_path: "/home/cdpg/chris/DITTO/data/breakout/breakout-ppo-ppo-features.npz"
+        cached_features_path: "/home/cdpg/chris/DITTO/data/nocturne/breakout-ppo-ppo-features.npz"
       d4rl:
-        checkpoint_path: "/home/cdpg/chris/DITTO/data/models/breakout/d4rl/"
+        checkpoint_path: "/home/cdpg/chris/DITTO/data/models/nocturne/d4rl/"
         wm_fname: "model-1000000_steps.pth"
-        cached_features_path: "/home/cdpg/chris/DITTO/data/breakout/exp-v2-cached.npz"
+        cached_features_path: "/home/cdpg/chris/DITTO/data/nocturne/exp-v2-cached.npz"
 
 envs:
+  nocturne:
+    env_id: "Nocturne"
+    observation_type: "pixels"
+    action_dim: 294
+    observation_space: []
+    action_type: "discrete"
+    pixel_stats:
+      mean: 33.0
+      std: 55.0
   breakout:
     env_id: "BreakoutNoFrameskip-v4"
     observation_type: "pixels"

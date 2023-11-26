@@ -10,6 +10,9 @@ import torch
 from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 
+# For testing saving images
+from PIL import Image
+
 
 class D4RLDataset(Dataset):
     def __init__(self, dataset_config):
@@ -24,6 +27,8 @@ class D4RLDataset(Dataset):
         # self.pixel_mean = 33
         # self.pixel_std = 55
 
+        print("Constructing the dataset?")
+
         if "dataset_path" in dataset_config:
             self.data = self.load_files(dataset_config.dataset_path)
         else:
@@ -32,7 +37,7 @@ class D4RLDataset(Dataset):
         print("total transitions:", self.num_transitions)
         print("num batch elements:", self.num_transitions//self.seq_length)
 
-    def fix_obs(self, img, new_hw=64, resize=True, sb3=False):
+    def fix_obs(self, img, new_hw=128, resize=True, sb3=False):
         """normalizes image"""
         #img = np.transpose(img, (1, 2, 0))
 
@@ -45,7 +50,6 @@ class D4RLDataset(Dataset):
         img = np.expand_dims(img, 0)
         img = img.astype(np.float32)
         img = (img - self.pixel_mean) / self.pixel_std
-
         return img
 
     def fix_terminals(self, terminals):
@@ -81,28 +85,36 @@ class D4RLDataset(Dataset):
         filenames = glob.glob(path+'/*.npz')
         filenames = filenames[:1000]
         print('got', len(filenames), 'files...')
-
         rewards=[]
 
+        # Where we are loading in the data
         for filename in tqdm(filenames, desc="loading files.."):
+            # Load in dictionary and observation key
             npz_dict = np.load(filename,allow_pickle=True)
-
             obs_key = "images" # or "observations" or "vecobs"
             
+            # Determine number of transitions and episode length
             episode_length = len(npz_dict["actions"])
             self.num_transitions += episode_length
-            resets = self.fix_terminals(npz_dict["terminals"])
+
+            # [CHECK] Crafted custom terminals array, since no terminal state
+            terminals = np.array([False] * episode_length)
+            resets = self.fix_terminals(terminals)
+
+            # Fix actions, set specific parameter for action space
             data["reset"].extend(resets)
             data["action"].extend(self.fix_actions(
-                npz_dict["actions"], resets))
+                npz_dict["actions"], resets, cats=294))
+
+            # Extend, gather observations
             data["obs"].extend([self.fix_obs(x, resize=True, sb3=True) #should resize be here?
                                 for x in npz_dict[obs_key]])
-            rewards.append(np.sum(npz_dict["rewards"]))
+            #rewards.append(np.sum(npz_dict["rewards"]))
         print("finished loading")
         
-        print("Reward min, max, mean, std", np.min(rewards), 
-            np.max(rewards), np.mean(rewards), np.std(rewards))
-        
+        # No need to print rewards here
+        #print("Reward min, max, mean, std", np.min(rewards), 
+        #    np.max(rewards), np.mean(rewards), np.std(rewards))
 
         data = {k: torch.tensor(np.array(v, dtype=np.float32)).to(self.device)
                 for k, v in data.items()}

@@ -8,6 +8,7 @@ from time import time
 import cv2
 import d4rl_atari
 import gym
+import gymnasium
 import numpy as np
 import torch
 import torch.nn as nn
@@ -182,7 +183,8 @@ class ACTrainer(object):
         a_dist = Categorical(action_probs)
         mean_entropy = a_dist.entropy().mean()
         a_hat = a_dist.sample()
-        a_onehot = torch.eye(18)[a_hat].to(self.device)
+        a_onehot = torch.eye(18).to(self.device)
+        a_onehot = a_onehot[a_hat]
         log_prob = a_dist.log_prob(a_hat)
 
         action = (a_hat.item(), a_onehot) if scalar else a_onehot
@@ -508,8 +510,11 @@ class ACTrainer(object):
         if self.env_name == "breakout" or True:
             if original_fn:
                 print('original fn true')
-                env = gym.make(self.env_id)
-                env = AtariWrapper(env, clip_reward=False, screen_size=64)
+                #env = gym.make(self.env_id)
+                env = gymnasium.make("ALE/Breakout-v5")
+                env = AtariWrapper(Monitor(env), clip_reward=False, screen_size=64)
+                env = WmEnv(env, self.world_model, n_envs, self.device, 18, 
+                            pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
             else:
                 env = make_atari_env(self.env_id, n_envs=n_envs,
                                      wrapper_kwargs={
@@ -607,7 +612,8 @@ class WmEnv(gym.Wrapper):
         img = img.astype(np.float32)
         img = (img - self.pixel_mean) / self.pixel_std
         # print("HERE", img.shape)
-        img = np.transpose(img, (0, 3, 1, 2))
+        #img = np.transpose(img, (0, 3, 1, 2))
+        #img = np.transpose(img, (0, 1, 2))
         img = np.expand_dims(img, 0)
         img = torch.from_numpy(img)
         img = img.to(self.device)
@@ -657,6 +663,8 @@ class WmEnv(gym.Wrapper):
 
     def reset(self, **kwargs):
         obs = self.env.reset(**kwargs)
+        print(self.env.observation_space)
+        print(obs[0].shape)
         if self.use_render:
             obs = self.env.render(mode="rgb_array")
             # print("HERE:", obs.shape)

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import sys
 
 import yaml
@@ -24,10 +25,14 @@ def load_conf(config_file, env_name):
 
 
 def wm_train(conf):
+    # Set up Weights and Biases
+    os.environ['WANDB__EXECUTABLE'] = "/home/cdpg/anaconda3/bin/python"
     wandb.login()
     wandb.init(project="world-model", config=conf.to_dict(),
                settings=wandb.Settings(code_dir="."))
-    wandb.run.log_code(".")
+    #wandb.run.log_code(".")
+
+    # Create the trainer, watch the model, train
     trainer = RSSMTrainer(conf)
     wandb.watch(trainer.model)
     trainer.train()
@@ -44,25 +49,33 @@ def bc_train(conf):
 
 
 def ac_train(conf):
+    # Note -- have to set WANDB__EXECUTABLE here
+    os.environ['WANDB__EXECUTABLE'] = "/home/cdpg/anaconda3/bin/python"
     wandb.login()
     wandb.init(project="dreamer", config=conf.to_dict(),
                settings=wandb.Settings(code_dir="."))
-    wandb.run.log_code(".")
+    
+    # Might comment out just to check?
+    # wandb.run.log_code(".")
     #conf = wandb.config
     # print('conf',conf)
+
+    # Initialize trainer?
     trainer = ACTrainer(conf)
     wandb.watch(trainer.policy)
     # wandb.watch(trainer.discrim)
     trainer.train()
+    print("Finished training")
 
 
 def main(conf_path=None):
-    config_file = "config/test_config.yaml" if conf_path is None else conf_path
+    config_file = "config/nocturne_config.yaml" if conf_path is None else conf_path
     conf = build_config(config_file)
-    # print(conf)
-    ac_train(conf)
-    #bc_train(conf)
-    # wm_train(conf)
+    # ac_train(conf)
+    # bc_train(conf)
+
+    # Currently just doing world model training
+    wm_train(conf)
 
 
 if __name__ == "__main__":

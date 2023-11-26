@@ -71,7 +71,6 @@ class WorldModelRSSM(nn.Module):
                       in_state,
                       ):
         embed = self.encoder(obs["obs"])
-
         prior, post, post_samples, features, hidden_states, out_states = \
             self.rssm_core.forward(embed,
                                    obs['action'],

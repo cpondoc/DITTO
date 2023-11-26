@@ -28,7 +28,7 @@ class ConvDecoder(nn.Module):
                  ):
         super().__init__()
         self.in_dim = in_dim
-        kernels = (5, 5, 6, 6)
+        kernels = (5, 5, 6, 6, 2)
         stride = 2
         d = cnn_depth
         if mlp_layers == 0:
@@ -61,6 +61,13 @@ class ConvDecoder(nn.Module):
             activation(),
             nn.ConvTranspose2d(d, out_channels, kernels[3], stride),
 
+            """
+            Other idea: change architecture to go from d * 32 -> d * 16?
+            """
+
+            # Add some layers?
+            activation(),
+            nn.ConvTranspose2d(out_channels, out_channels, kernels[4], stride),
         )
 
     def forward(self, features, target):
