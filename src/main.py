@@ -39,6 +39,7 @@ def wm_train(conf):
 
 
 def bc_train(conf):
+    os.environ['WANDB__EXECUTABLE'] = "/home/cdpg/anaconda3/bin/python"
     wandb.login()
     wandb.init(project="bc", config=conf.to_dict(),
                settings=wandb.Settings(code_dir="."))
@@ -69,13 +70,15 @@ def ac_train(conf):
 
 
 def main(conf_path=None):
-    config_file = "config/nocturne_config.yaml" if conf_path is None else conf_path
+    config_file = "config/test_config.yaml" if conf_path is None else conf_path # Change to nocturne_config.yaml
     conf = build_config(config_file)
     # ac_train(conf)
-    # bc_train(conf)
+    
+    # Now just doing behavior cloning training
+    bc_train(conf)
 
     # Currently just doing world model training
-    wm_train(conf)
+    # wm_train(conf)
 
 
 if __name__ == "__main__":

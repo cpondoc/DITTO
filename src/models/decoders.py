@@ -49,6 +49,10 @@ class ConvDecoder(nn.Module):
                     norm(hidden_dim, eps=1e-3),
                     activation()]
 
+
+        """
+        Other idea: change architecture to go from d * 32 -> d * 16?
+        """
         self.model = nn.Sequential(
             nn.Flatten(0, 1),
             *layers,
@@ -60,10 +64,6 @@ class ConvDecoder(nn.Module):
             nn.ConvTranspose2d(d * 2, d, kernels[2], stride),
             activation(),
             nn.ConvTranspose2d(d, out_channels, kernels[3], stride),
-
-            """
-            Other idea: change architecture to go from d * 32 -> d * 16?
-            """
 
             # Add some layers?
             activation(),

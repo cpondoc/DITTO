@@ -8,6 +8,7 @@ from time import time
 import cv2
 import d4rl_atari
 import gym
+import gymnasium
 import numpy as np
 import torch
 import torch.nn as nn
@@ -121,8 +122,11 @@ class BCTrainer(object):
                 self.log_stats(loss.item(), a_hat, action)
 
     def validate(self):
-        mean_rwd, max_rwd, min_rwd, std_rwd, rwds, actions = self.parallel_test_agent(
+        # Currently just doing single testing agent for now!
+        mean_rwd, max_rwd, min_rwd, std_rwd, rwds, actions = self.single_test_agent(
             n_games=self.n_games)
+        '''mean_rwd, max_rwd, min_rwd, std_rwd, rwds, actions = self.parallel_test_agent(
+            n_games=self.n_games)'''
         val_metrics = {"val/actions": wandb.Histogram(actions),
                        "val/returns": wandb.Histogram(rwds),
                        "val/mean_ep_return": mean_rwd,
@@ -145,12 +149,80 @@ class BCTrainer(object):
         return a_hat
 
     def make_env(self, n_envs=1, original_fn=True, seed=None):
-        env = make_atari_env(self.env_id, n_envs=n_envs,
+        """
+        Edit here: if original_fn is true, do non multi-processing
+        """
+        if (original_fn):
+            env = gymnasium.make(self.env_id)
+            env = AtariWrapper(env, clip_reward=False, screen_size=64)
+        else:
+            env = make_atari_env(self.env_id, n_envs=n_envs,
                              wrapper_kwargs={
                                  "clip_reward": False, "screen_size": 64},
                              vec_env_cls=SubprocVecEnv, seed=seed)
-
         return env
+
+    @torch.inference_mode()
+    def single_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
+        """
+        Added due to problems with parallelization -- can also be used in future.
+        """
+        # Set rewards and actions
+        rewards = []
+        actions = []
+
+        # Define a similar prepare observation function
+        def prep_obs(img):
+            # Make float and standardized
+            img = img.astype(np.float32)
+            img = (img - self.pixel_mean) / self.pixel_std
+
+            # Expand the dimensions and transpose to have correct shape for CNN Encoder
+            img = np.expand_dims(img, axis=0)
+            img = np.transpose(img, (0, 3, 1, 2))
+
+            # Add to device
+            img = torch.from_numpy(img)
+            img = img.to(self.device)
+            return img
+
+        # Set up progress bar and environment
+        pbar = tqdm(total=n_games, leave=False, desc="test_single_agent")
+        env = self.make_env(n_envs=n_envs, original_fn=True)
+
+        # Since this new environment returns tuple of 2, use only first element
+        img = env.reset()
+        img = prep_obs(img[0])
+
+        # Iterate until have total number of complete games
+        n_complete = 0
+        while n_complete < n_games:
+            # Get an action
+            s_action = self.get_action2(img, policy=policy)
+            actions.extend(s_action.tolist())
+
+            # Take a step in the environment with the new action
+            img, r, done, truncated, info = env.step(s_action)
+            img = prep_obs(img)
+            
+            # For each environment, check if done
+            for i in range(n_envs):
+                if done and "episode_frame_number" in info:
+
+                    # Add to complete game and print episode frame number
+                    n_complete += 1
+                    if print_reward:
+                        print(info[i]["episode_frame_number"])
+
+                    # Append rewards and progress bar
+                    rewards.append(r)
+                    pbar.update(1)
+
+                    # Reset environment after getting to a new end state
+                    img = env.reset()
+                    img = prep_obs(img[0])
+        return np.mean(rewards), np.max(rewards), np.min(rewards), np.std(rewards), rewards, actions
+
 
     @torch.inference_mode()
     def parallel_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
