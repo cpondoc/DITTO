@@ -452,11 +452,11 @@ class ACTrainer(object):
                 # replay_buffer = self.parallel_test_agent(n_games=2, n_env=2)
                 # mean_reward, max_reward, min_reward, stdev_reward, rewards = replay_buffer.calc_stats()
                 # actions = replay_buffer.get_actions()
-                mean_reward, max_reward, min_reward, stdev_reward, rewards, actions = self.parallel_test_agent(
+                mean_reward, max_reward, min_reward, stdev_reward, rewards, actions = self.single_test_agent(
                     n_games=8, n_envs=4, policy=self.policy)
-                mean_reward_bc, max_reward_bc, min_reward_bc, stdev_reward_bc, rewards_bc, actions_bc = self.parallel_test_agent(
+                mean_reward_bc, max_reward_bc, min_reward_bc, stdev_reward_bc, rewards_bc, actions_bc = self.single_test_agent(
                     n_games=8, n_envs=4, policy=self.policy_bc)
-                mean_reward_gail, max_reward_gail, min_reward_gail, stdev_reward_gail, rewards_gail, actions_gail = self.parallel_test_agent(
+                mean_reward_gail, max_reward_gail, min_reward_gail, stdev_reward_gail, rewards_gail, actions_gail = self.single_test_agent(
                     n_games=8, n_envs=4, policy=self.policy_gail)
 
             else:
@@ -510,11 +510,12 @@ class ACTrainer(object):
         if self.env_name == "breakout" or True:
             if original_fn:
                 print('original fn true')
-                #env = gym.make(self.env_id)
-                env = gymnasium.make("ALE/Breakout-v5")
-                env = AtariWrapper(Monitor(env), clip_reward=False, screen_size=64)
-                env = WmEnv(env, self.world_model, n_envs, self.device, 18, 
+                env = gymnasium.make(self.env_id)
+                env = AtariWrapper(env, clip_reward=False, screen_size=64)
+                env = WmEnv(env, self.world_model, 1, self.device, 18, 
                             pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
+                #env = gym.make(self.env_id)
+                #env = AtariWrapper(env, clip_reward=False, screen_size=64)
             else:
                 env = make_atari_env(self.env_id, n_envs=n_envs,
                                      wrapper_kwargs={
@@ -547,6 +548,39 @@ class ACTrainer(object):
         return a_hat
 
     @torch.inference_mode()
+    def single_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
+        """
+        New function to get AC to work.
+        """
+        rewards = []
+        actions = []
+
+        pbar = tqdm(total=n_games, leave=False, desc="test_agent2")
+        #with open(os.devnull, 'w') as f:
+        #    with redirect_stdout(f):
+        env = self.make_env(n_envs=n_envs, original_fn=True)#=False)
+
+        # Get features
+        init_obs = env.reset()[0]
+        init_obs = np.expand_dims(init_obs, 0)
+        features = env.prep_obs(init_obs)
+
+        n_complete = 0
+        while n_complete < n_games:
+            s_action = self.get_action2(features, policy=policy)
+            actions.extend(s_action.tolist())
+            features, r, done, info = env.step(s_action)
+
+            for i in range(n_envs):
+                if done and "episode_frame_number" in info:
+                    n_complete += 1
+                    if print_reward:
+                        print(info[i]["episode_frame_number"])
+                    rewards.append(r)
+                    pbar.update(1)
+        return np.mean(rewards), np.max(rewards), np.min(rewards), np.std(rewards), rewards, actions
+
+    @torch.inference_mode()
     def parallel_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
         rewards = []
         actions = []
@@ -554,13 +588,16 @@ class ACTrainer(object):
         pbar = tqdm(total=n_games, leave=False, desc="test_agent2")
         #with open(os.devnull, 'w') as f:
         #    with redirect_stdout(f):
-        env = self.make_env(n_envs=n_envs, original_fn=False)
+        env = self.make_env(n_envs=n_envs, original_fn=True)#=False)
 
-        init_obs = env.reset()
+        # Change to be just a singular observation, which is fine
+        init_obs = env.reset()[0]
+        init_obs = np.expand_dims(init_obs, 0)
         features = env.prep_obs(init_obs)
 
-        is_monitor_wrapped = is_vecenv_wrapped(
-            env, VecMonitor) or env.env_is_wrapped(Monitor)[0]
+        # Comment out for now
+        #is_monitor_wrapped = is_vecenv_wrapped(
+        #   env, VecMonitor) or env.env_is_wrapped(Monitor)[0]
         n_complete = 0
         while n_complete < n_games:
             s_action = self.get_action2(features, policy=policy)
@@ -612,8 +649,7 @@ class WmEnv(gym.Wrapper):
         img = img.astype(np.float32)
         img = (img - self.pixel_mean) / self.pixel_std
         # print("HERE", img.shape)
-        #img = np.transpose(img, (0, 3, 1, 2))
-        #img = np.transpose(img, (0, 1, 2))
+        img = np.transpose(img, (0, 3, 1, 2))
         img = np.expand_dims(img, 0)
         img = torch.from_numpy(img)
         img = img.to(self.device)
@@ -626,12 +662,18 @@ class WmEnv(gym.Wrapper):
             reset = torch.ones(
                 (1, img.shape[1]), dtype=torch.bool)
         else:
-            d = [True if info[i]["lives"] == 0
-                 else False for i in range(len(done))]
+            d = [[done]]
+            #d = [True if info[i]["lives"] == 0
+            #     else False for i in range(len(done))]
             reset[0, np.where(d)[0]] = 1
             if len(action.shape) == 1:
-                action = torch.eye(self.action_dim)[
-                    action].unsqueeze(0).to(self.device)
+                index = action
+                action = torch.eye(self.action_dim).to(self.device)
+                action = action[index].unsqueeze(0)
+                #action = torch.eye(self.action_dim)[action].unsqueeze(0)
+                #action = action.to(self.device)
+                '''action = torch.eye(self.action_dim)[
+                    action].unsqueeze(0).to(self.device)'''
             idxs = np.where(done)[0]
             if len(idxs) > 0:
                 action[:, idxs] = torch.zeros(
@@ -646,7 +688,8 @@ class WmEnv(gym.Wrapper):
     def step(self, action):
         # print(action.item())
         #print(action)
-        obs, reward, done, info = self.env.step(action)
+        obs, reward, done, truncated, info = self.env.step(action)
+        obs = np.expand_dims(obs, 0)
         if self.use_render:
             obs = self.env.render(mode="rgb_array")
             obs = np.dot(obs[..., :3], [0.2989, 0.5870, 0.1140])
@@ -663,8 +706,6 @@ class WmEnv(gym.Wrapper):
 
     def reset(self, **kwargs):
         obs = self.env.reset(**kwargs)
-        print(self.env.observation_space)
-        print(obs[0].shape)
         if self.use_render:
             obs = self.env.render(mode="rgb_array")
             # print("HERE:", obs.shape)

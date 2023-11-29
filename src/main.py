@@ -64,7 +64,7 @@ def ac_train(conf):
     # Initialize trainer?
     trainer = ACTrainer(conf)
     wandb.watch(trainer.policy)
-    # wandb.watch(trainer.discrim)
+    wandb.watch(trainer.discrim)
     trainer.train()
     print("Finished training")
 
@@ -72,10 +72,12 @@ def ac_train(conf):
 def main(conf_path=None):
     config_file = "config/test_config.yaml" if conf_path is None else conf_path # Change to nocturne_config.yaml
     conf = build_config(config_file)
-    # ac_train(conf)
+    
+    # Do Actor critic, train a behavioral agent
+    ac_train(conf)
     
     # Now just doing behavior cloning training
-    bc_train(conf)
+    #bc_train(conf)
 
     # Currently just doing world model training
     # wm_train(conf)
