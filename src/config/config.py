@@ -23,7 +23,8 @@ def build_wm_config(raw_config, env_conf):
     rssm_config = config_dict.ConfigDict(
         raw_config["wm"]["architecture"]["rssm"])
     rssm_config.action_dim = env_conf.action_dim
-    rssm_config.embed_dim = cnn_depth * 32 # * 9 # Here we multiply by 9 to match encoder dimension
+    # rssm_config.embed_dim = cnn_depth * 32 # * 9 # Here we multiply by 9 to match encoder dimension
+    rssm_config.embed_dim = cnn_depth * 32  * 9 # Here we multiply by 9 to match encoder dimension
     rssm_config.update(raw_config["wm"]["architecture"]["latents"])
 
     decoder_config = config_dict.ConfigDict()

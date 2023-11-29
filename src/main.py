@@ -70,7 +70,7 @@ def ac_train(conf):
 
 
 def main(conf_path=None):
-    config_file = "config/test_config.yaml" if conf_path is None else conf_path # Change to nocturne_config.yaml
+    config_file = "config/nocturne_config.yaml" if conf_path is None else conf_path # Change to nocturne_config.yaml
     conf = build_config(config_file)
     
     # Do Actor critic, train a behavioral agent

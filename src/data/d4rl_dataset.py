@@ -25,14 +25,16 @@ class D4RLDataset(Dataset):
         # self.pixel_std = 55
 
         if "dataset_path" in dataset_config:
-            self.data = self.load_files(dataset_config.dataset_path)
+            # self.data = self.load_files(dataset_config.dataset_path)
+            self.data = self.other_load_files(dataset_config.dataset_path)
         else:
             self.data = self.load_d4rl_data(dataset_config.dataset_names)
 
         print("total transitions:", self.num_transitions)
         print("num batch elements:", self.num_transitions//self.seq_length)
 
-    def fix_obs(self, img, new_hw=64, resize=True, sb3=False):
+    def fix_obs(self, img, new_hw=128, resize=True, sb3=False):
+    # def fix_obs(self, img, new_hw=64, resize=True, sb3=False):
         """
         Normalizes image: FIX TO 128 for Atari!
         """
@@ -101,6 +103,7 @@ class D4RLDataset(Dataset):
 
             # Fix actions, set specific parameter for action space
             data["reset"].extend(resets)
+            data["reset"][0] = True
             data["action"].extend(self.fix_actions(
                 npz_dict["actions"], resets, cats=294))
 

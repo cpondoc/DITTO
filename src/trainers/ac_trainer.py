@@ -68,7 +68,8 @@ class ACTrainer(object):
         "beamrider": 9,
         "mspacman": 9,
         "qbert": 6,
-        "spaceInvaders": 6}
+        "spaceInvaders": 6,
+        "nocturne": 294}
         self.action_dim = action_space[self.conf.env_name]
         print('got action dim', self.action_dim)
         self.policy = ActorCritic(
@@ -126,7 +127,9 @@ class ACTrainer(object):
 
     def val_train_split(self, dataset, episode_starts, split=0.9):
         print("Splitting data..")
+        print(dataset)
         split_idx_ep = int(len(episode_starts)*split)
+        print(split_idx_ep)
         split_idx = episode_starts[split_idx_ep]
         idxs = torch.arange(len(dataset))
 
@@ -157,9 +160,15 @@ class ACTrainer(object):
         train_dataset, val_dataset, train_ep_starts, val_ep_starts = \
             self.val_train_split(self.dataset, episode_starts, split=0.9)
 
+        print(train_ep_starts)
+        print(val_ep_starts)
         train_dataloader = self.build_dataloader(
+            val_dataset, val_ep_starts
+        )
+        val_dataloader = None
+        '''train_dataloader = self.build_dataloader(
             train_dataset, train_ep_starts)
-        val_dataloader = self.build_dataloader(val_dataset, val_ep_starts)
+        val_dataloader = self.build_dataloader(val_dataset, val_ep_starts)'''
 
         return train_dataloader, val_dataloader
 
@@ -183,7 +192,9 @@ class ACTrainer(object):
         a_dist = Categorical(action_probs)
         mean_entropy = a_dist.entropy().mean()
         a_hat = a_dist.sample()
-        a_onehot = torch.eye(18).to(self.device)
+
+        # Encode the number of action space
+        a_onehot = torch.eye(294).to(self.device)
         a_onehot = a_onehot[a_hat]
         log_prob = a_dist.log_prob(a_hat)
 
@@ -413,9 +424,10 @@ class ACTrainer(object):
         return accuracy_per_step[0]
 
     def log_stats(self, metrics_dict):
-        if self.steps % 200 == 0:
+        # No validation just for now
+        '''if self.steps % 200 == 0:
             val_metrics = self.validate()
-            wandb.log(val_metrics, step=self.steps)
+            wandb.log(val_metrics, step=self.steps)'''
         wandb.log(metrics_dict, step=self.steps)
         self.steps += 1
 
@@ -663,6 +675,8 @@ class WmEnv(gym.Wrapper):
                 (1, img.shape[1]), dtype=torch.bool)
         else:
             d = [[done]]
+
+            # Bring back if you're doing multiple environments
             #d = [True if info[i]["lives"] == 0
             #     else False for i in range(len(done))]
             reset[0, np.where(d)[0]] = 1
@@ -670,10 +684,6 @@ class WmEnv(gym.Wrapper):
                 index = action
                 action = torch.eye(self.action_dim).to(self.device)
                 action = action[index].unsqueeze(0)
-                #action = torch.eye(self.action_dim)[action].unsqueeze(0)
-                #action = action.to(self.device)
-                '''action = torch.eye(self.action_dim)[
-                    action].unsqueeze(0).to(self.device)'''
             idxs = np.where(done)[0]
             if len(idxs) > 0:
                 action[:, idxs] = torch.zeros(

@@ -13,7 +13,7 @@ data:
       use_cached_features: False # loads cached latent features if they exist, otherwise infers from world model
       sb3:
         checkpoint_path: "/home/cdpg/chris/DITTO/data/models/nocturne/sb3/" # saves trained policies here, and reads World Model
-        wm_fname: "sb3-model-1000000_steps.pth"
+        wm_fname: "model-100000_steps.pth"
         cached_features_path: "/home/cdpg/chris/DITTO/data/nocturne/breakout-ppo-ppo-features.npz"
       d4rl:
         checkpoint_path: "/home/cdpg/chris/DITTO/data/models/nocturne/d4rl/"
