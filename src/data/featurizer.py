@@ -55,8 +55,10 @@ class Featurizer(object):
         wm.requires_grad_(False)
 
         print("Getting features...")
+
+        # Editing here to return observations, as well.
         features = self.infer_features(dataset, dataloader, wm)
-        return features, dataset.data['action'].cpu().numpy(), dataset.data['reset'].cpu().numpy()
+        return features, dataset.data['action'].cpu().numpy(), dataset.data['reset'].cpu().numpy(), dataset.data['obs'].cpu().numpy()
 
     def build_dataloader(self):
         dataset_config = config_dict.ConfigDict(self.conf)

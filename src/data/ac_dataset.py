@@ -21,7 +21,8 @@ class ACDataset(Dataset):
         self.dataset_config = conf.dataset_config
         self.featurizer_config = self.conf.featurizer_config
 
-        self.data_keys = ["actions", "features", "resets"]
+        # Edited to take in the initial observations
+        self.data_keys = ["actions", "features", "resets", "observations"]
         self.data = self.build_data(conf)
 
         #self.data = self.load_data()
@@ -38,6 +39,9 @@ class ACDataset(Dataset):
         # self.conf.wm_config
 
     def build_data(self, conf):
+        """
+        11/30: Editing this to account for intitial observations
+        """
         data = {k: [] for k in self.data_keys}
 
         print("BUILDING DATAAAA")
@@ -50,21 +54,22 @@ class ACDataset(Dataset):
         else:
             print("making features..")
             print(self.conf)
-            features, actions, resets = Featurizer(
+            features, actions, resets, observations = Featurizer(
                 self.conf).get_features()
-            np.savez(self.conf.cached_features_path, features=features, actions=actions, resets=resets)
+            np.savez(self.conf.cached_features_path, features=features, actions=actions, resets=resets, observations=observations)
             print('Built Features', self.conf.cached_features_path)
         if self.conf.episode_limit > 0:
             reset_idxs = np.where(resets)[0]
             if self.conf.episode_limit < len(reset_idxs):
                 print('Cut dataset down to', self.conf.episode_limit, 'episodes')
                 ep_idx = reset_idxs[self.conf.episode_limit]
-                (features, actions, resets) = (
-                    features[:ep_idx], actions[:ep_idx], resets[:ep_idx])
+                (features, actions, resets, observations) = (
+                    features[:ep_idx], actions[:ep_idx], resets[:ep_idx], observations[:ep_idx])
 
         data["features"].extend(features)
         data["actions"].extend(actions)
         data["resets"].extend(resets)
+        data["observations"].extend(observations)
 
         data = {k: torch.tensor(np.array(v, dtype=np.float32)).to(self.device)
                 for k, v in data.items()}
@@ -89,7 +94,8 @@ class ACDataset(Dataset):
         feature = self.data["features"][idx:end_idx]
         reset = self.data["resets"][idx:end_idx]
         action = self.data["actions"][idx:end_idx]
-        return feature, reset, action
+        observation = self.data["observations"][idx:end_idx]
+        return feature, reset, action, observation
 
     @staticmethod
     def ac_collate(batch):

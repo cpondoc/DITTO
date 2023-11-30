@@ -15,6 +15,13 @@ class DecoderModel(nn.Module):
         loss = self.image_weight * loss_image
 
         return loss, loss_image, decoded_img
+    
+    def recover_img(self, latents):
+        """
+        11/30: Initial function to recover the corresponding image from the latents.
+        """
+        loss_image = self.decoder.recover_img(latents)
+        return loss_image
 
 
 class ConvDecoder(nn.Module):
@@ -79,3 +86,9 @@ class ConvDecoder(nn.Module):
                                   target).sum(dim=[-1, -2, -3])  # MSE
 
         return loss, decoded_img
+
+    def recover_img(self, features):
+        decoded_img = self.model(features)
+        decoded_img = torch.reshape(
+            decoded_img, (1, 128, 128))
+        return decoded_img

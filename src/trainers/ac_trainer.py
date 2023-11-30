@@ -204,15 +204,14 @@ class ACTrainer(object):
 
         return (action, log_prob, mean_entropy), state_values
 
-    def wm_step_viz(self, latent, a_onehot):
-        prior, post_samples, features = None, None, None
+    def wm_step_viz(self, obs, in_state):
+        """
+        11/30: Add a function to eventually get the features for a reconstucted WM image.
+        """
         with torch.no_grad():
-            h, z = latent.split([1024, 1024], -1)
             with autocast(enabled=True):
-                prior, post_samples, features, h, z = self.world_model.dream_for_img(a_onehot, (h, z))
-
-            next_latent = torch.cat((h, z), dim=-1)
-        return prior, post_samples, features, out_states, next_latent
+                features, out_states = self.world_model.forward(obs, in_state)
+                return features, out_states
 
     def wm_step(self, latent, a_onehot):
         with torch.no_grad():
@@ -242,8 +241,7 @@ class ACTrainer(object):
                                                                                student=student,
                                                                                policy=policy)
             
-            print(state.shape)
-            print(a_onehot.shape)
+            
             state = self.wm_step(state, a_onehot)
 
             if k < self.unrolls-1:
@@ -279,9 +277,10 @@ class ACTrainer(object):
 
         return ac_buffer, rewards, actions, entropy, target_buffer
 
-    def BehaviorCloneRollout(self, latents, actions, timesteps=50):
+    def BehaviorCloneRollout(self, latents, resets, actions, observations, timesteps=50):
         """
-        Just visualize the rollout of the agent
+        11/30: Visualize the rollout of the BC agent within the WM
+        Idea: take 0th index, run on a single latent, single reset, single action, etc.
         """
 
         # Get just the first set of latents
@@ -302,15 +301,6 @@ class ACTrainer(object):
             a_onehot = gen_action(state)
             state = self.wm_step(state, a_onehot)
 
-        ''' a_onehot = gen_action(state)
-            prior, post_samples, features, out_states, state = self.wm_step_viz(state, a_onehot)
-            #state = self.wm_step(state, a_onehot)
-            print("Got first state")
-            a_onehot = gen_action(state)
-            prior, post_samples, features, out_states, state = self.wm_step(state, a_onehot)
-            print("got second state")'''
-
-        # Generate another action
 
     def BehaviorClone(self, latents, actions):
         # input shapes = (T, B, dim)
@@ -366,7 +356,7 @@ class ACTrainer(object):
             epoch.update(1)
             for batch in tqdm(self.train_dataloader, leave=False):
                 # (T, B, 2048)
-                latents, resets, actions = [x.to(self.device) for x in batch]
+                latents, resets, actions, observations = [x.to(self.device) for x in batch]
 
                 # BC just for fun
                 BCLoss, entropy_bc = self.BehaviorClone(latents, actions)
@@ -476,7 +466,7 @@ class ACTrainer(object):
         wandb.log(metrics_dict, step=self.steps)
         self.steps += 1
 
-    def validate(self):
+    def validate(self, run_tests=False):
         #TODO: fix this to a config value for target weight updte rate
         self.policy.update_critic_target()
         policy_losses = 0
@@ -486,16 +476,12 @@ class ACTrainer(object):
         self.policy.eval()
         with torch.no_grad():
             for batch in tqdm(self.val_dataloader, leave=False):
-                latents, resets, actions = [x.to(self.device) for x in batch]
-
-                # Here, just literally try to visualize the rollout in the WM environment
-                # self.BehaviorCloneRollout(latents, actions)
-                #sle.fb
+                latents, resets, actions, observations = [x.to(self.device) for x in batch]
 
                 ac_buffer, latent_rewards, ac_actions, entropy, target_buff = self.unroll_policy(
                     latents, resets, discrim=False)
                 accuracy = self.get_accuracy(actions.cpu(), ac_actions.cpu())
-                self.BehaviorCloneRollout(latents, actions)
+                self.BehaviorCloneRollout(latents, resets, actions, observations)
 
                 unnorm_returns = MC_return(latent_rewards, target_buff[-1],
                                            norm=False, gamma=self.gamma, eps=self.eps)
@@ -510,7 +496,9 @@ class ACTrainer(object):
                 value_losses += value_loss
                 run_accuracy += accuracy
                 run_entropy += entropy
-            '''if self.sb3:
+
+            # Putting this in a new path so not to run right now
+            if self.sb3 and run_tests:
                 # replay_buffer = self.parallel_test_agent(n_games=2, n_env=2)
                 # mean_reward, max_reward, min_reward, stdev_reward, rewards = replay_buffer.calc_stats()
                 # actions = replay_buffer.get_actions()
@@ -523,68 +511,78 @@ class ACTrainer(object):
 
             else:
                 mean_reward, max_reward, min_reward, stdev_reward, rewards, actions = self.test_agent(
-                    n_games=2)'''
-
-        '''if self.do_checkpoint and mean_reward > self.max_val_reward:
-            self.max_val_reward = mean_reward
-            model_name = self.checkpoint_path + f"policy-r{mean_reward}.pth"
-            # print('Saving model', model_name)
-            torch.save(self.policy.state_dict(), model_name)
-        if self.do_checkpoint and mean_reward_bc > self.max_val_reward_bc:
-            self.max_val_reward_bc = mean_reward_bc
-            model_name = self.checkpoint_path + f"policy-bc-r{mean_reward_bc}.pth"
-            # print('Saving model', model_name)
-            torch.save(self.policy_bc.state_dict(), model_name)
-        if self.do_checkpoint and mean_reward_gail > self.max_val_reward_gail:
-            self.max_val_reward_gail = mean_reward_gail
-            model_name = self.checkpoint_path + f"policy-gail-r{mean_reward_gail}.pth"
-            # print('Saving model', model_name)
-            torch.save(self.policy_gail.state_dict(), model_name)'''
+                    n_games=2)
+        
+        # Putting this in a new path so not to run right now
+        if (run_tests):
+            if self.do_checkpoint and mean_reward > self.max_val_reward:
+                self.max_val_reward = mean_reward
+                model_name = self.checkpoint_path + f"policy-r{mean_reward}.pth"
+                # print('Saving model', model_name)
+                torch.save(self.policy.state_dict(), model_name)
+            if self.do_checkpoint and mean_reward_bc > self.max_val_reward_bc:
+                self.max_val_reward_bc = mean_reward_bc
+                model_name = self.checkpoint_path + f"policy-bc-r{mean_reward_bc}.pth"
+                # print('Saving model', model_name)
+                torch.save(self.policy_bc.state_dict(), model_name)
+            if self.do_checkpoint and mean_reward_gail > self.max_val_reward_gail:
+                self.max_val_reward_gail = mean_reward_gail
+                model_name = self.checkpoint_path + f"policy-gail-r{mean_reward_gail}.pth"
+                # print('Saving model', model_name)
+                torch.save(self.policy_gail.state_dict(), model_name)
 
         self.policy.train()
         lvdl = len(self.val_dataloader)
-        val_metrics = {"val/policy_loss": policy_losses/lvdl,
-                       "val/value_loss": value_losses/lvdl,
-                       "val/acc": run_accuracy/lvdl,
-                       "val/entropy": run_entropy/lvdl,
-                       "val/mean_ep_return": mean_reward,
-                       "val/stdev_ep_return": stdev_reward,
-                       "val/max_ep_return": max_reward,
-                       "val/min_ep_return": min_reward,
-                       "val/actions": wandb.Histogram(actions),
-                       "val/returns": wandb.Histogram(rewards),
-                       "val/mean_ep_return_gail": mean_reward_gail,
-                       "val/stdev_ep_return_gail": stdev_reward_gail,
-                       "val/max_ep_return_gail": max_reward_gail,
-                       "val/min_ep_return_gail": min_reward_gail,
-                       "val/actions_gail": wandb.Histogram(actions_gail),
-                       "val/returns_gail": wandb.Histogram(rewards_gail),
-                       "val/mean_ep_return_bc": mean_reward_bc,
-                       "val/stdev_ep_return_bc": stdev_reward_bc,
-                       "val/max_ep_return_bc": max_reward_bc,
-                       "val/min_ep_return_bc": min_reward_bc,
-                       "val/actions_bc": wandb.Histogram(actions_bc),
-                       "val/returns_bc": wandb.Histogram(rewards_bc)}
-        return val_metrics
 
-    def make_env(self, n_envs=1, original_fn=True, seed=None):
+        # Putting this in a new path so not to run right now
+        if (run_tests):
+            val_metrics = {"val/policy_loss": policy_losses/lvdl,
+                        "val/value_loss": value_losses/lvdl,
+                        "val/acc": run_accuracy/lvdl,
+                        "val/entropy": run_entropy/lvdl,
+                        "val/mean_ep_return": mean_reward,
+                        "val/stdev_ep_return": stdev_reward,
+                        "val/max_ep_return": max_reward,
+                        "val/min_ep_return": min_reward,
+                        "val/actions": wandb.Histogram(actions),
+                        "val/returns": wandb.Histogram(rewards),
+                        "val/mean_ep_return_gail": mean_reward_gail,
+                        "val/stdev_ep_return_gail": stdev_reward_gail,
+                        "val/max_ep_return_gail": max_reward_gail,
+                        "val/min_ep_return_gail": min_reward_gail,
+                        "val/actions_gail": wandb.Histogram(actions_gail),
+                        "val/returns_gail": wandb.Histogram(rewards_gail),
+                        "val/mean_ep_return_bc": mean_reward_bc,
+                        "val/stdev_ep_return_bc": stdev_reward_bc,
+                        "val/max_ep_return_bc": max_reward_bc,
+                        "val/min_ep_return_bc": min_reward_bc,
+                        "val/actions_bc": wandb.Histogram(actions_bc),
+                        "val/returns_bc": wandb.Histogram(rewards_bc)}
+            return val_metrics
 
-        if self.env_name == "breakout" or True:
+    def make_env(self, n_envs=1, original_fn=True, seed=None, ):
+        
+        if self.env_name == "nocturne":
+            # Load in path for Nocturne environment configuration
+            cfg_path = "/home/cdpg/chris/ditto-nocturne/nocturne/cfgs/config.yaml"
+            data = {}
+            with open(cfg_path, 'r') as file:
+                # Load the YAML file
+                data = yaml.safe_load(file)
+
+            # Create a Nocturne environment and wrap it around a World Model environment object
+            env = create_env(data)
+            env = WmEnv(env, self.world_model, 1, self.device, 18, pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
+
+        elif self.env_name == "breakout" or True:
             if original_fn:
                 print('original fn true')
-                cfg_path = "/home/cdpg/chris/ditto-nocturne/nocturne/cfgs/config.yaml"
-                data = {}
-                with open(cfg_path, 'r') as file:
-                    # Load the YAML file
-                    data = yaml.safe_load(file)
-                env = create_env(data)
-                # env = WmEnv(env, self.world_model, 1, self.device, 18, pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
-                '''env = gymnasium.make(self.env_id)
+
+                # Change to the gymnasium environment to work
+                env = gymnasium.make(self.env_id)
                 env = AtariWrapper(env, clip_reward=False, screen_size=64)
                 env = WmEnv(env, self.world_model, 1, self.device, 18, 
-                            pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)'''
-                #env = gym.make(self.env_id)
-                #env = AtariWrapper(env, clip_reward=False, screen_size=64)
+                            pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
             else:
                 env = make_atari_env(self.env_id, n_envs=n_envs,
                                      wrapper_kwargs={
@@ -651,7 +649,7 @@ class ACTrainer(object):
     @torch.inference_mode()
     def single_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
         """
-        New function to get AC to work.
+        11/30: DOES NOT WORK, BUT new function to get AC to work.
         """
         rewards = []
         actions = []
@@ -661,31 +659,24 @@ class ACTrainer(object):
         env = self.make_env(n_envs=n_envs, original_fn=True)
 
         # Get features
-        #self.set_display_window()
+        self.set_display_window()
         init_obs = env.reset()
         objects_that_moved = env.get_objects_that_moved()
         moving_vehicles = [obj for obj in env.env.get_vehicles() if obj in objects_that_moved]
         vehicle = self.find_full_timestep_vehicle(moving_vehicles, env.env)
 
-        #env.get_image()
-        #print(init_obs)
-        obs = env.render()
-        print(obs)
-        if (vehicle == None):
-            print("YOOO")
-        '''_ = env.scenario.getConeImage(
-            env.scenario.getVehicles()[0],
-            # how far the agent can see
+        # Get the observation -- commented out code won't work :()
+        init_obs = env.scenario.getConeImage(
+            vehicle,
             view_dist=80,
             view_angle=np.pi * (120 / 180),
             head_angle=0.0,
-            # whether to draw the goal position in the image
-            draw_target_position=False)'''
-        print(obs)
+            draw_target_position=False
+        )
 
-        '''init_obs = np.expand_dims(init_obs, 0)
+        init_obs = np.expand_dims(init_obs, 0)
         features = env.prep_obs(init_obs)
-        self.veh_id = find_full_timestep_vehicle()'''
+        self.veh_id = find_full_timestep_vehicle()
 
         n_complete = 0
         while n_complete < n_games:
@@ -710,18 +701,13 @@ class ACTrainer(object):
         pbar = tqdm(total=n_games, leave=False, desc="test_agent2")
         #with open(os.devnull, 'w') as f:
         #    with redirect_stdout(f):
-        env = self.make_env(n_envs=n_envs, original_fn=True)#=False)
+        env = self.make_env(n_envs=n_envs, original_fn=False)
 
-        # Change to be just a singular observation, which is fine
-        #env.reset()
-        #self.find_full_timestep_vehicle(env.)
+        init_obs = env.reset()
+        features = env.prep_obs(init_obs)
 
-        #init_obs = np.expand_dims(init_obs, 0)
-        #features = env.prep_obs(init_obs)
-
-        # Comment out for now
-        #is_monitor_wrapped = is_vecenv_wrapped(
-        #   env, VecMonitor) or env.env_is_wrapped(Monitor)[0]
+        is_monitor_wrapped = is_vecenv_wrapped(
+            env, VecMonitor) or env.env_is_wrapped(Monitor)[0]
         n_complete = 0
         while n_complete < n_games:
             s_action = self.get_action2(features, policy=policy)
@@ -837,14 +823,5 @@ class WmEnv(gym.Wrapper):
         # latent = self.prep_obs(obs)
         # exit()
         return obs
-    
-    def get_image(self):
-        _ = self.env.scenario.getConeImage(
-            self.env.scenario.getVehicles()[0],
-            # how far the agent can see
-            view_dist=80,
-            view_angle=np.pi * (120 / 180),
-            head_angle=0.0,
-            # whether to draw the goal position in the image
-            draw_target_position=False
-            )
+
+        

@@ -62,13 +62,24 @@ class WorldModelRSSM(nn.Module):
                                    in_state)
         return features, out_states
 
+    def modified_forward(self, obs, in_state):
+        embed = self.encoder(obs["obs"])
+        prior, post, post_samples, features, hidden_states, out_states = \
+            self.rssm_core.forward(embed,
+                                   obs['action'],
+                                   obs['reset'],
+                                   in_state)
+        return features, hidden_states, out_states
+
     def dream(self, action, in_state):
         _, (h, z) = self.rssm_core.cell.forward(action, in_state)
         return (h, z)
 
-    def dream_for_img(self, action, in_state):
-        prior, post, post_samples, features, hidden_states, out_states = self.rssm_core.cell.forward(action, in_state)
-        return prior, post_samples, features, hidden_states, out_states
+    def get_reconstructed_img(self, features):
+        """
+        11/30: Function to help recover reconstructed images from features.
+        """
+        return self.decoder.recover_img(features)
 
     def training_step(self,
                       obs,
