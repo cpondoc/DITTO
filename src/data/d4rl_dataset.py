@@ -100,10 +100,10 @@ class D4RLDataset(Dataset):
             # [CHECK] Crafted custom terminals array, since no terminal state
             terminals = np.array([False] * episode_length)
             resets = self.fix_terminals(terminals)
+            resets[0] = True
 
             # Fix actions, set specific parameter for action space
             data["reset"].extend(resets)
-            data["reset"][0] = True
             data["action"].extend(self.fix_actions(
                 npz_dict["actions"], resets, cats=294))
 

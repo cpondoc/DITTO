@@ -160,15 +160,9 @@ class ACTrainer(object):
         train_dataset, val_dataset, train_ep_starts, val_ep_starts = \
             self.val_train_split(self.dataset, episode_starts, split=0.9)
 
-        print(train_ep_starts)
-        print(val_ep_starts)
         train_dataloader = self.build_dataloader(
-            val_dataset, val_ep_starts
-        )
-        val_dataloader = None
-        '''train_dataloader = self.build_dataloader(
             train_dataset, train_ep_starts)
-        val_dataloader = self.build_dataloader(val_dataset, val_ep_starts)'''
+        val_dataloader = self.build_dataloader(val_dataset, val_ep_starts)
 
         return train_dataloader, val_dataloader
 
@@ -425,9 +419,9 @@ class ACTrainer(object):
 
     def log_stats(self, metrics_dict):
         # No validation just for now
-        '''if self.steps % 200 == 0:
+        if self.steps % 200 == 0:
             val_metrics = self.validate()
-            wandb.log(val_metrics, step=self.steps)'''
+            wandb.log(val_metrics, step=self.steps)
         wandb.log(metrics_dict, step=self.steps)
         self.steps += 1
 
