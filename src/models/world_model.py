@@ -66,6 +66,10 @@ class WorldModelRSSM(nn.Module):
         _, (h, z) = self.rssm_core.cell.forward(action, in_state)
         return (h, z)
 
+    def dream_for_img(self, action, in_state):
+        prior, post, post_samples, features, hidden_states, out_states = self.rssm_core.cell.forward(action, in_state)
+        return prior, post_samples, features, hidden_states, out_states
+
     def training_step(self,
                       obs,
                       in_state,

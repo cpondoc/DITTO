@@ -36,6 +36,12 @@ from torch.distributions import Categorical
 from torch.utils.data import DataLoader, Subset
 from tqdm.auto import tqdm, trange
 
+# For loading in Nocturne
+from nocturne import Action
+from nocturne.envs.wrappers import create_env
+from pyvirtualdisplay import Display
+import yaml
+
 #display = Display(visible=0, size=(400, 300))
 #display.start()
 
@@ -198,6 +204,16 @@ class ACTrainer(object):
 
         return (action, log_prob, mean_entropy), state_values
 
+    def wm_step_viz(self, latent, a_onehot):
+        prior, post_samples, features = None, None, None
+        with torch.no_grad():
+            h, z = latent.split([1024, 1024], -1)
+            with autocast(enabled=True):
+                prior, post_samples, features, h, z = self.world_model.dream_for_img(a_onehot, (h, z))
+
+            next_latent = torch.cat((h, z), dim=-1)
+        return prior, post_samples, features, out_states, next_latent
+
     def wm_step(self, latent, a_onehot):
         with torch.no_grad():
             h, z = latent.split([1024, 1024], -1)
@@ -225,7 +241,9 @@ class ACTrainer(object):
                                                                                target=True, 
                                                                                student=student,
                                                                                policy=policy)
-
+            
+            print(state.shape)
+            print(a_onehot.shape)
             state = self.wm_step(state, a_onehot)
 
             if k < self.unrolls-1:
@@ -260,6 +278,39 @@ class ACTrainer(object):
         actions = torch.stack(actions)
 
         return ac_buffer, rewards, actions, entropy, target_buffer
+
+    def BehaviorCloneRollout(self, latents, actions, timesteps=50):
+        """
+        Just visualize the rollout of the agent
+        """
+
+        # Get just the first set of latents
+        state = latents[0]
+        state = torch.reshape(state, (-1, 2048))
+
+        def gen_action(state):
+            # Generate an action
+            logits, action_probs = self.policy_bc.forward_actor(state)
+            a_dist = Categorical(action_probs)
+            a_hat = a_dist.sample()
+            a_onehot = torch.eye(294).to(self.device)
+            a_onehot = a_onehot[a_hat]
+            return a_onehot
+
+        # Take a step in the world model
+        for time in range(timesteps):
+            a_onehot = gen_action(state)
+            state = self.wm_step(state, a_onehot)
+
+        ''' a_onehot = gen_action(state)
+            prior, post_samples, features, out_states, state = self.wm_step_viz(state, a_onehot)
+            #state = self.wm_step(state, a_onehot)
+            print("Got first state")
+            a_onehot = gen_action(state)
+            prior, post_samples, features, out_states, state = self.wm_step(state, a_onehot)
+            print("got second state")'''
+
+        # Generate another action
 
     def BehaviorClone(self, latents, actions):
         # input shapes = (T, B, dim)
@@ -437,9 +488,14 @@ class ACTrainer(object):
             for batch in tqdm(self.val_dataloader, leave=False):
                 latents, resets, actions = [x.to(self.device) for x in batch]
 
+                # Here, just literally try to visualize the rollout in the WM environment
+                # self.BehaviorCloneRollout(latents, actions)
+                #sle.fb
+
                 ac_buffer, latent_rewards, ac_actions, entropy, target_buff = self.unroll_policy(
                     latents, resets, discrim=False)
                 accuracy = self.get_accuracy(actions.cpu(), ac_actions.cpu())
+                self.BehaviorCloneRollout(latents, actions)
 
                 unnorm_returns = MC_return(latent_rewards, target_buff[-1],
                                            norm=False, gamma=self.gamma, eps=self.eps)
@@ -454,22 +510,22 @@ class ACTrainer(object):
                 value_losses += value_loss
                 run_accuracy += accuracy
                 run_entropy += entropy
-            if self.sb3:
+            '''if self.sb3:
                 # replay_buffer = self.parallel_test_agent(n_games=2, n_env=2)
                 # mean_reward, max_reward, min_reward, stdev_reward, rewards = replay_buffer.calc_stats()
                 # actions = replay_buffer.get_actions()
-                mean_reward, max_reward, min_reward, stdev_reward, rewards, actions = self.single_test_agent(
-                    n_games=8, n_envs=4, policy=self.policy)
                 mean_reward_bc, max_reward_bc, min_reward_bc, stdev_reward_bc, rewards_bc, actions_bc = self.single_test_agent(
                     n_games=8, n_envs=4, policy=self.policy_bc)
+                mean_reward, max_reward, min_reward, stdev_reward, rewards, actions = self.single_test_agent(
+                    n_games=8, n_envs=4, policy=self.policy)
                 mean_reward_gail, max_reward_gail, min_reward_gail, stdev_reward_gail, rewards_gail, actions_gail = self.single_test_agent(
                     n_games=8, n_envs=4, policy=self.policy_gail)
 
             else:
                 mean_reward, max_reward, min_reward, stdev_reward, rewards, actions = self.test_agent(
-                    n_games=2)
+                    n_games=2)'''
 
-        if self.do_checkpoint and mean_reward > self.max_val_reward:
+        '''if self.do_checkpoint and mean_reward > self.max_val_reward:
             self.max_val_reward = mean_reward
             model_name = self.checkpoint_path + f"policy-r{mean_reward}.pth"
             # print('Saving model', model_name)
@@ -483,7 +539,7 @@ class ACTrainer(object):
             self.max_val_reward_gail = mean_reward_gail
             model_name = self.checkpoint_path + f"policy-gail-r{mean_reward_gail}.pth"
             # print('Saving model', model_name)
-            torch.save(self.policy_gail.state_dict(), model_name)
+            torch.save(self.policy_gail.state_dict(), model_name)'''
 
         self.policy.train()
         lvdl = len(self.val_dataloader)
@@ -516,10 +572,17 @@ class ACTrainer(object):
         if self.env_name == "breakout" or True:
             if original_fn:
                 print('original fn true')
-                env = gymnasium.make(self.env_id)
+                cfg_path = "/home/cdpg/chris/ditto-nocturne/nocturne/cfgs/config.yaml"
+                data = {}
+                with open(cfg_path, 'r') as file:
+                    # Load the YAML file
+                    data = yaml.safe_load(file)
+                env = create_env(data)
+                # env = WmEnv(env, self.world_model, 1, self.device, 18, pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
+                '''env = gymnasium.make(self.env_id)
                 env = AtariWrapper(env, clip_reward=False, screen_size=64)
                 env = WmEnv(env, self.world_model, 1, self.device, 18, 
-                            pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
+                            pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)'''
                 #env = gym.make(self.env_id)
                 #env = AtariWrapper(env, clip_reward=False, screen_size=64)
             else:
@@ -552,6 +615,38 @@ class ACTrainer(object):
             a_hat = a_hat.unsqueeze(0)
 
         return a_hat
+    
+    def set_display_window(self):
+        """Set a virtual display for headless machines."""
+        if "DISPLAY" not in os.environ:
+            disp = Display()
+            disp.start()
+    
+    def find_full_timestep_vehicle(self, moving_vehicles, env):
+        """
+        Find a vehicle that takes actions across the entire episode.
+        """
+        # Iterate through all moving vehicles
+        for vehicle in moving_vehicles:
+            satisfies_all = True
+
+            # Break out if there is a non-existent action at a time step
+            for time in range(90):
+                expert_action = env.scenario.expert_action(vehicle, time)
+                if (expert_action is None):
+                    satisfies_all = False
+                    break
+                else:
+                    if (np.isnan(expert_action.acceleration) or np.isnan(expert_action.steering)):
+                        satisfies_all = False
+                        break
+
+            # Return if it actually went through each time step
+            if (satisfies_all):
+                return vehicle
+
+        # If no match found, return None
+        return None
 
     @torch.inference_mode()
     def single_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
@@ -561,15 +656,36 @@ class ACTrainer(object):
         rewards = []
         actions = []
 
+        # Create the environment
         pbar = tqdm(total=n_games, leave=False, desc="test_agent2")
-        #with open(os.devnull, 'w') as f:
-        #    with redirect_stdout(f):
-        env = self.make_env(n_envs=n_envs, original_fn=True)#=False)
+        env = self.make_env(n_envs=n_envs, original_fn=True)
 
         # Get features
-        init_obs = env.reset()[0]
-        init_obs = np.expand_dims(init_obs, 0)
+        #self.set_display_window()
+        init_obs = env.reset()
+        objects_that_moved = env.get_objects_that_moved()
+        moving_vehicles = [obj for obj in env.env.get_vehicles() if obj in objects_that_moved]
+        vehicle = self.find_full_timestep_vehicle(moving_vehicles, env.env)
+
+        #env.get_image()
+        #print(init_obs)
+        obs = env.render()
+        print(obs)
+        if (vehicle == None):
+            print("YOOO")
+        '''_ = env.scenario.getConeImage(
+            env.scenario.getVehicles()[0],
+            # how far the agent can see
+            view_dist=80,
+            view_angle=np.pi * (120 / 180),
+            head_angle=0.0,
+            # whether to draw the goal position in the image
+            draw_target_position=False)'''
+        print(obs)
+
+        '''init_obs = np.expand_dims(init_obs, 0)
         features = env.prep_obs(init_obs)
+        self.veh_id = find_full_timestep_vehicle()'''
 
         n_complete = 0
         while n_complete < n_games:
@@ -597,9 +713,11 @@ class ACTrainer(object):
         env = self.make_env(n_envs=n_envs, original_fn=True)#=False)
 
         # Change to be just a singular observation, which is fine
-        init_obs = env.reset()[0]
-        init_obs = np.expand_dims(init_obs, 0)
-        features = env.prep_obs(init_obs)
+        #env.reset()
+        #self.find_full_timestep_vehicle(env.)
+
+        #init_obs = np.expand_dims(init_obs, 0)
+        #features = env.prep_obs(init_obs)
 
         # Comment out for now
         #is_monitor_wrapped = is_vecenv_wrapped(
@@ -719,3 +837,14 @@ class WmEnv(gym.Wrapper):
         # latent = self.prep_obs(obs)
         # exit()
         return obs
+    
+    def get_image(self):
+        _ = self.env.scenario.getConeImage(
+            self.env.scenario.getVehicles()[0],
+            # how far the agent can see
+            view_dist=80,
+            view_angle=np.pi * (120 / 180),
+            head_angle=0.0,
+            # whether to draw the goal position in the image
+            draw_target_position=False
+            )
