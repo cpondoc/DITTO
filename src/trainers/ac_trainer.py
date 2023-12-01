@@ -287,13 +287,14 @@ class ACTrainer(object):
 
         return ac_buffer, rewards, actions, entropy, target_buffer
 
-    def BehaviorCloneRollout(self, latents, resets, actions, observations, timesteps=50):
+    def BehaviorCloneRollout(self, latents, resets, actions, observations, timestep):
         """
         11/30: Visualize the rollout of the BC agent within the WM
         Idea: take 0th index, run on a single latent, single reset, single action, etc.
         """
 
         # Get just the first set of latents
+        TIMESTEPS = 50
         state = latents[0]
         state = torch.reshape(state, (-1, 2048))
 
@@ -307,7 +308,7 @@ class ACTrainer(object):
             return a_onehot
 
         # Take a step in the world model
-        for time in range(timesteps):
+        for time in range(TIMESTEPS):
             a_onehot = gen_action(state)
             state = self.wm_step(state, a_onehot)
 
@@ -320,7 +321,9 @@ class ACTrainer(object):
             # Save to file
             img = np.squeeze(img.cpu().detach().numpy())
             save_img = Image.fromarray(img, mode='L')
-            save_img.save('/home/cdpg/chris/DITTO/src/rollouts/' + str(time) + '.png')
+            if not os.path.exists('/home/cdpg/chris/DITTO/src/rollouts/' + str(timestep)):
+                os.makedirs('/home/cdpg/chris/DITTO/src/rollouts/' + str(timestep))
+            save_img.save('/home/cdpg/chris/DITTO/src/rollouts/' + str(timestep) + '/' + str(time) + '.png')
 
 
     def BehaviorClone(self, latents, actions):
@@ -482,12 +485,12 @@ class ACTrainer(object):
     def log_stats(self, metrics_dict):
         # No validation just for now
         if self.steps % 200 == 0:
-            val_metrics = self.validate()
+            val_metrics = self.validate(timestep=self.steps)
             # wandb.log(val_metrics, step=self.steps) -- commenting out for now
         wandb.log(metrics_dict, step=self.steps)
         self.steps += 1
 
-    def validate(self, run_tests=False):
+    def validate(self, run_tests=False, timestep=0):
         #TODO: fix this to a config value for target weight updte rate
         self.policy.update_critic_target()
         policy_losses = 0
@@ -502,7 +505,7 @@ class ACTrainer(object):
                 ac_buffer, latent_rewards, ac_actions, entropy, target_buff = self.unroll_policy(
                     latents, resets, discrim=False)
                 accuracy = self.get_accuracy(actions.cpu(), ac_actions.cpu())
-                self.BehaviorCloneRollout(latents, resets, actions, observations)
+                self.BehaviorCloneRollout(latents, resets, actions, observations, timestep)
 
                 unnorm_returns = MC_return(latent_rewards, target_buff[-1],
                                            norm=False, gamma=self.gamma, eps=self.eps)
