@@ -9,3 +9,4 @@ videos
 .pytest_cache
 checkpoints/*
 .vscode
+src/rollouts/*
