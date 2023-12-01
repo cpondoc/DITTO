@@ -42,6 +42,9 @@ from nocturne.envs.wrappers import create_env
 from pyvirtualdisplay import Display
 import yaml
 
+# For displaying an image
+from PIL import Image
+
 #display = Display(visible=0, size=(400, 300))
 #display.start()
 
@@ -212,6 +215,13 @@ class ACTrainer(object):
             with autocast(enabled=True):
                 features, out_states = self.world_model.forward(obs, in_state)
                 return features, out_states
+    
+    def wm_image(self, latent):
+        """
+        Visualize rollout within the WM
+        """
+        img = self.world_model.get_reconstructed_img(latent)
+        return img
 
     def wm_step(self, latent, a_onehot):
         with torch.no_grad():
@@ -300,6 +310,17 @@ class ACTrainer(object):
         for time in range(timesteps):
             a_onehot = gen_action(state)
             state = self.wm_step(state, a_onehot)
+
+            # Get the features and get the rendered image
+            features = state[0].cpu().detach().numpy()
+            features = torch.from_numpy(np.expand_dims(features, 0))
+            features = features.to(self.device)
+            img = self.wm_image(features)
+
+            # Save to file
+            img = np.squeeze(img.cpu().detach().numpy())
+            save_img = Image.fromarray(img, mode='L')
+            save_img.save('/home/cdpg/chris/DITTO/src/rollouts/' + str(time) + '.png')
 
 
     def BehaviorClone(self, latents, actions):
@@ -462,7 +483,7 @@ class ACTrainer(object):
         # No validation just for now
         if self.steps % 200 == 0:
             val_metrics = self.validate()
-            wandb.log(val_metrics, step=self.steps)
+            # wandb.log(val_metrics, step=self.steps) -- commenting out for now
         wandb.log(metrics_dict, step=self.steps)
         self.steps += 1
 
@@ -509,9 +530,9 @@ class ACTrainer(object):
                 mean_reward_gail, max_reward_gail, min_reward_gail, stdev_reward_gail, rewards_gail, actions_gail = self.single_test_agent(
                     n_games=8, n_envs=4, policy=self.policy_gail)
 
-            else:
+            '''else:
                 mean_reward, max_reward, min_reward, stdev_reward, rewards, actions = self.test_agent(
-                    n_games=2)
+                    n_games=2)'''
         
         # Putting this in a new path so not to run right now
         if (run_tests):
@@ -560,7 +581,7 @@ class ACTrainer(object):
                         "val/returns_bc": wandb.Histogram(rewards_bc)}
             return val_metrics
 
-    def make_env(self, n_envs=1, original_fn=True, seed=None, ):
+    def make_env(self, n_envs=1, original_fn=True, seed=None):
         
         if self.env_name == "nocturne":
             # Load in path for Nocturne environment configuration
@@ -824,4 +845,3 @@ class WmEnv(gym.Wrapper):
         # exit()
         return obs
 
-        
