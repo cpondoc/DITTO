@@ -662,34 +662,12 @@ class ACTrainer(object):
 
         # If no match found, return None
         return None
-
-    @torch.inference_mode()
-    def single_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
+    
+    def get_nocturne_features(self, env):
         """
-        Validates an agent by grabbing cone image from environment, turning into a
-        latent image, getting an action, taking a step, and continuing to run.
+        Abstract the latent features retrieval to a new function.
         """
-        # Empty rewards and actions
-        rewards = []
-        actions = []
-
-        # Create new folder to keep all of the validation images
-        folder_name = "/home/cdpg/chris/DITTO/src/validation/" + str(self.steps)
-        if not os.path.exists(folder_name):
-            os.makedirs(folder_name)
-
-        # Create folder for each of the number of games
-        for i in range(n_games):
-            game_folder = folder_name + "/" + str(i)
-            if not os.path.exists(game_folder):
-                os.makedirs(game_folder)
-
-        # Create the environment
-        pbar = tqdm(total=n_games, leave=False, desc="test_agent2")
-        env = self.make_env(n_envs=n_envs, original_fn=True)
-
-        # Reset the display window and get the initial observation
-        self.set_display_window()
+        # Reset the environment
         init_obs = env.reset()
 
         # Get a vehicle to focus on
@@ -716,6 +694,36 @@ class ACTrainer(object):
 
         # Get features and vehicle ID
         features = env.prep_obs(init_obs)
+        return features, vehicle
+
+    @torch.inference_mode()
+    def single_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
+        """
+        Validates an agent by grabbing cone image from environment, turning into a
+        latent image, getting an action, taking a step, and continuing to run.
+        """
+        # Empty rewards and actions
+        rewards = []
+        actions = []
+
+        # Create new folder to keep all of the validation images
+        folder_name = "/home/cdpg/chris/DITTO/src/validation/" + str(self.steps)
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+
+        # Create folder for each of the number of games
+        for i in range(n_games):
+            game_folder = folder_name + "/" + str(i)
+            if not os.path.exists(game_folder):
+                os.makedirs(game_folder)
+
+        # Create the environment
+        pbar = tqdm(total=n_games, leave=False, desc="test_agent2")
+        env = self.make_env(n_envs=n_envs, original_fn=True)
+
+        # Reset the display window and get the initial features
+        self.set_display_window()
+        features, vehicle = self.get_nocturne_features(env)
 
         # Simulate a certain number of trajectories
         n_complete = 0
@@ -726,12 +734,23 @@ class ACTrainer(object):
             actions.extend(s_action.tolist())
             features, r, done, info, timestep = env.step(s_action, vehicle=vehicle, save_path=folder_name, game=n_complete)
 
-            # Update results based on number of games played
+            # Keep iterating and log rewards
             for i in range(n_envs):
-                if (done or timestep == 30):
-                    n_complete += 1
-                    rewards.append(r[vehicle.id])
-                    pbar.update(1)
+                if (vehicle.id in done):
+                    if (done[vehicle.id] or timestep == 30):
+                        n_complete += 1
+                        if (vehicle.id not in r):
+                            rewards.append(0)
+                        else:
+                            rewards.append(r[vehicle.id])
+
+                        # Update progress and reset
+                        pbar.update(1)
+                        features, vehicle = self.get_nocturne_features(env)
+                else:
+                    features, vehicle = self.get_nocturne_features(env)
+        
+        # Return summary of rewards
         return np.mean(rewards), np.max(rewards), np.min(rewards), np.std(rewards), rewards, actions
 
     @torch.inference_mode()
@@ -908,6 +927,10 @@ class WmEnv(gym.Wrapper):
         return latent, reward, done, info, self.time_step
 
     def reset(self, **kwargs):
+        """
+        Changed here to reflect that timestep should reset back to 0.
+        """
+        self.time_step = 0
         obs = self.env.reset(**kwargs)
         if self.use_render:
             obs = self.env.render(mode="rgb_array")
