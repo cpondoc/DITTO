@@ -10,3 +10,4 @@ videos
 checkpoints/*
 .vscode
 src/rollouts/*
+src/validation/*

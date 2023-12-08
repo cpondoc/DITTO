@@ -48,6 +48,10 @@ from PIL import Image
 #display = Display(visible=0, size=(400, 300))
 #display.start()
 
+# Constants for dealing with expert actions
+ACC_RANGE, ACC_BUCKETS = (-6, 6), 13
+STEERING_RANGE, STEERING_BUCKETS = (-1, 1), 21
+
 class ACTrainer(object):
     def __init__(self, conf):
         self.conf = conf.ac_trainer_config
@@ -206,15 +210,6 @@ class ACTrainer(object):
             state_values, target_values) if target else state_values
 
         return (action, log_prob, mean_entropy), state_values
-
-    def wm_step_viz(self, obs, in_state):
-        """
-        11/30: Add a function to eventually get the features for a reconstucted WM image.
-        """
-        with torch.no_grad():
-            with autocast(enabled=True):
-                features, out_states = self.world_model.forward(obs, in_state)
-                return features, out_states
     
     def wm_image(self, latent):
         """
@@ -485,7 +480,7 @@ class ACTrainer(object):
     def log_stats(self, metrics_dict):
         # No validation just for now
         if self.steps % 200 == 0:
-            val_metrics = self.validate(timestep=self.steps)
+            val_metrics = self.validate(timestep=self.steps, run_tests=True)
             # wandb.log(val_metrics, step=self.steps) -- commenting out for now
         wandb.log(metrics_dict, step=self.steps)
         self.steps += 1
@@ -532,10 +527,6 @@ class ACTrainer(object):
                     n_games=8, n_envs=4, policy=self.policy)
                 mean_reward_gail, max_reward_gail, min_reward_gail, stdev_reward_gail, rewards_gail, actions_gail = self.single_test_agent(
                     n_games=8, n_envs=4, policy=self.policy_gail)
-
-            '''else:
-                mean_reward, max_reward, min_reward, stdev_reward, rewards, actions = self.test_agent(
-                    n_games=2)'''
         
         # Putting this in a new path so not to run right now
         if (run_tests):
@@ -596,7 +587,7 @@ class ACTrainer(object):
 
             # Create a Nocturne environment and wrap it around a World Model environment object
             env = create_env(data)
-            env = WmEnv(env, self.world_model, 1, self.device, 18, pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
+            env = WmEnv(env, self.world_model, 1, self.device, 294, pixel_mean = self.conf.pixel_mean, pixel_std = self.conf.pixel_std)
 
         elif self.env_name == "breakout" or True:
             if original_fn:
@@ -639,7 +630,9 @@ class ACTrainer(object):
         return a_hat
     
     def set_display_window(self):
-        """Set a virtual display for headless machines."""
+        """
+        Set a virtual display for headless machines.
+        """
         if "DISPLAY" not in os.environ:
             disp = Display()
             disp.start()
@@ -673,23 +666,38 @@ class ACTrainer(object):
     @torch.inference_mode()
     def single_test_agent(self, n_envs=1, n_games=10, print_reward=False, policy=None):
         """
-        11/30: DOES NOT WORK, BUT new function to get AC to work.
+        Validates an agent by grabbing cone image from environment, turning into a
+        latent image, getting an action, taking a step, and continuing to run.
         """
+        # Empty rewards and actions
         rewards = []
         actions = []
+
+        # Create new folder to keep all of the validation images
+        folder_name = "/home/cdpg/chris/DITTO/src/validation/" + str(self.steps)
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+
+        # Create folder for each of the number of games
+        for i in range(n_games):
+            game_folder = folder_name + "/" + str(i)
+            if not os.path.exists(game_folder):
+                os.makedirs(game_folder)
 
         # Create the environment
         pbar = tqdm(total=n_games, leave=False, desc="test_agent2")
         env = self.make_env(n_envs=n_envs, original_fn=True)
 
-        # Get features
+        # Reset the display window and get the initial observation
         self.set_display_window()
         init_obs = env.reset()
+
+        # Get a vehicle to focus on
         objects_that_moved = env.get_objects_that_moved()
         moving_vehicles = [obj for obj in env.env.get_vehicles() if obj in objects_that_moved]
         vehicle = self.find_full_timestep_vehicle(moving_vehicles, env.env)
 
-        # Get the observation -- commented out code won't work :()
+        # Get the observation -- also alter dimensions to make sure it works
         init_obs = env.scenario.getConeImage(
             vehicle,
             view_dist=80,
@@ -698,22 +706,31 @@ class ACTrainer(object):
             draw_target_position=False
         )
 
-        init_obs = np.expand_dims(init_obs, 0)
-        features = env.prep_obs(init_obs)
-        self.veh_id = find_full_timestep_vehicle()
+        # Convert to grayscale and 128
+        init_obs = np.mean(init_obs, axis=2, dtype=np.uint8)
+        init_obs = np.array(cv2.resize(init_obs, dsize=(128, 128), interpolation=cv2.INTER_AREA))
 
+        # Now going to stack dimensions
+        init_obs = np.expand_dims(init_obs, axis=2)
+        init_obs = np.expand_dims(init_obs, axis=0)
+
+        # Get features and vehicle ID
+        features = env.prep_obs(init_obs)
+
+        # Simulate a certain number of trajectories
         n_complete = 0
         while n_complete < n_games:
+
+            # Get action recommendation and take step in environment
             s_action = self.get_action2(features, policy=policy)
             actions.extend(s_action.tolist())
-            features, r, done, info = env.step(s_action)
+            features, r, done, info, timestep = env.step(s_action, vehicle=vehicle, save_path=folder_name, game=n_complete)
 
+            # Update results based on number of games played
             for i in range(n_envs):
-                if done and "episode_frame_number" in info:
+                if (done or timestep == 30):
                     n_complete += 1
-                    if print_reward:
-                        print(info[i]["episode_frame_number"])
-                    rewards.append(r)
+                    rewards.append(r[vehicle.id])
                     pbar.update(1)
         return np.mean(rewards), np.max(rewards), np.min(rewards), np.std(rewards), rewards, actions
 
@@ -761,6 +778,7 @@ class WmEnv(gym.Wrapper):
         self.observations = []
         self.dones = 0
         self.use_render = use_render
+        self.time_step = 0
         super().__init__(env)
 
     def wm_step(self, latent, a_onehot):
@@ -811,30 +829,83 @@ class WmEnv(gym.Wrapper):
                 action[:, idxs] = torch.zeros(
                     (len(idxs), self.action_dim)).to(self.device)
 
+        # Define custom actions and resets?
         obs = {"obs": img, "action": action, "reset": reset.to(self.device)}
+
+        # Get the features
         features, out_states = self.wm(obs, self.in_states)
         self.in_states = out_states
         features = features.squeeze()
         return features
+    
+    def reverse_discretized_action(self, action_index):
+        """
+        Function to convert from discretized index to acceleration and steering angle
+        """
+        # Calculate steering index
+        steering_index = action_index % STEERING_BUCKETS
+        steering_angle = (steering_index * 0.1) + STEERING_RANGE[0]
 
-    def step(self, action):
-        # print(action.item())
-        #print(action)
-        obs, reward, done, truncated, info = self.env.step(action)
-        obs = np.expand_dims(obs, 0)
+        # Calculate acceleration index
+        acc_index = action_index // STEERING_BUCKETS
+        acceleration = acc_index + ACC_RANGE[0]
+
+        return acceleration, steering_angle
+
+    def step(self, action, vehicle=None, save_path=None, game=None):
+        """
+        Updated now to reflect taking an action from a vehicle.
+        """
+        # Squeeze out action
+        action = action.cpu().numpy()
+        action = action[0]
+        acc, steering_angle = self.reverse_discretized_action(action)
+
+        # Take the action
+        moving_vehs = [vehicle]
+        obs, reward, done, info = self.env.step({
+            veh.id: Action(acceleration=acc, steering=steering_angle, head_angle=0)
+            for veh in moving_vehs
+        })
+
+        # Update observation to the cone image
+        obs = self.env.scenario.getConeImage(
+            vehicle,
+            view_dist=80,
+            view_angle=np.pi * (120 / 180),
+            head_angle=0.0,
+            draw_target_position=False
+        )
+        im = Image.fromarray(obs)
+        im.save(save_path + "/" + str(game) + "/" + str(self.time_step) + ".png")
+
+        # Convert to grayscale and 128
+        obs = np.mean(obs, axis=2, dtype=np.uint8)
+        obs = np.array(cv2.resize(obs, dsize=(128, 128), interpolation=cv2.INTER_AREA))
+
+        # Now going to stack dimensions
+        obs = np.expand_dims(obs, axis=2)
+        obs = np.expand_dims(obs, axis=0)
+
+        # Old code to render
         if self.use_render:
             obs = self.env.render(mode="rgb_array")
             obs = np.dot(obs[..., :3], [0.2989, 0.5870, 0.1140])
             obs = self.reshape_img(obs)
             obs = np.expand_dims(obs, 0)
-        latent = self.prep_obs(obs, action, done, info)
+        
+        # Get new latent state and update time step
+        latent = self.prep_obs(obs, np.array([action]), done, info)
+        self.time_step += 1
+
+        # Update info dict, as well (?)
         if isinstance(info, dict):
             info["obs"] = obs
         else:
             for i in range(len(info)):
                 info[i]["obs"] = obs[i]
 
-        return latent, reward, done, info
+        return latent, reward, done, info, self.time_step
 
     def reset(self, **kwargs):
         obs = self.env.reset(**kwargs)
